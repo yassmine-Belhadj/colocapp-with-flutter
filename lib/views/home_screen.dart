@@ -9,6 +9,7 @@ import '../providers/auth_provider.dart';
 import '../providers/group_provider.dart';
 import '../services/group_service.dart';
 import '../services/task_service.dart';
+import 'auth/ProfileScreen.dart';
 import 'auth/login_screen.dart';
 import 'group/create_group_screen.dart';
 import 'group/group_detail_screen.dart';
@@ -787,7 +788,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ],
         ),
       ),
-      bottomNavigationBar: BottomNavigationBar(
+      bottomNavigationBar:
+      BottomNavigationBar(
         type: BottomNavigationBarType.fixed,
         backgroundColor: Colors.white,
         elevation: 8,
@@ -798,25 +800,36 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             label: 'Home',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.task_outlined),
-            activeIcon: Icon(Icons.task),
-            label: 'Tasks',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.note_outlined),
-            activeIcon: Icon(Icons.note),
-            label: 'Notes',
+            icon: Icon(Icons.group_outlined),
+            activeIcon: Icon(Icons.group),
+            label: 'Groups',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person_outlined),
             activeIcon: Icon(Icons.person),
-            label: 'Account',
+            label: 'Profile',
           ),
         ],
         currentIndex: _selectedIndex,
         selectedItemColor: Colors.blue,
         unselectedItemColor: Colors.grey,
-        onTap: _onItemTapped,
+        onTap: (index) {
+          if (index == 2) { // Groups tab
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const GroupListScreen()),
+            );
+          } else if (index == 3) { // Profile tab
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const ProfileScreen()),
+            );
+          } else {
+            setState(() {
+              _selectedIndex = index;
+            });
+          }
+        },
       ),
       floatingActionButton: (user?.isAdmin ?? false)
           ? FloatingActionButton(
