@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter/animation.dart';
+import 'dart:math';
 import '../models/group.dart';
 import '../models/task.dart';
 import '../models/user.dart';
@@ -12,7 +14,6 @@ import 'group/create_group_screen.dart';
 import 'group/group_detail_screen.dart';
 import 'group/group_list_screen.dart';
 import 'widgets/task_dialog.dart';
-import 'widgets/task_list_item.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,16 +22,35 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _selectedIndex = 0;
   List<Task> _tasks = [];
   List<User> _groupMembers = [];
   bool _isLoading = true;
+  late AnimationController _progressController;
+  late Animation<double> _progressAnimation;
+  double _completionPercentage = 0.0;
+
+  final List<String> _groupIcons = [
+    'assets/images/office.png',
+    'assets/images/home.png',
+    'assets/images/self.png',
+  ];
 
   @override
   void initState() {
     super.initState();
+    _progressController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    );
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _progressController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -66,9 +86,22 @@ class _HomeScreenState extends State<HomeScreen> {
         ? await taskService.getTasksAssignedByUser(user.id!)
         : await taskService.getTasksForUser(user.id!);
 
+    final newPercentage = _calculateCompletionPercentage(tasks);
+
     setState(() {
       _tasks = tasks;
+      _completionPercentage = newPercentage;
     });
+
+    _progressAnimation = Tween<double>(
+      begin: 0,
+      end: _completionPercentage,
+    ).animate(CurvedAnimation(
+      parent: _progressController,
+      curve: Curves.easeOut,
+    ));
+
+    _progressController.forward(from: 0);
   }
 
   Future<void> _toggleTaskCompletion(Task task) async {
@@ -120,22 +153,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return completedCount / tasks.length;
   }
 
-  Widget _buildGroupIcon(Group group) {
-    String imagePath;
-    switch (group.name.toLowerCase()) {
-      case 'office':
-        imagePath = 'assets/images/office.png';
-        break;
-      case 'home':
-        imagePath = 'assets/images/home.png';
-        break;
-      case 'self':
-        imagePath = 'assets/images/self.png';
-        break;
-      default:
-        imagePath = 'assets/images/home.png';
-    }
+  String _getRandomGroupIcon() {
+    final random = Random();
+    return _groupIcons[random.nextInt(_groupIcons.length)];
+  }
 
+  Widget _buildGroupCard(Group group) {
     return GestureDetector(
       onTap: () {
         final groupProvider = Provider.of<GroupProvider>(context, listen: false);
@@ -148,22 +171,463 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       },
       child: Container(
-        width: 80,
+        width: 120,
         margin: const EdgeInsets.only(right: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.2),
+              spreadRadius: 2,
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.asset(imagePath, height: 60),
-            const SizedBox(height: 8),
-            Text(
-              group.name,
-              style: const TextStyle(fontSize: 14),
-              textAlign: TextAlign.center,
-              overflow: TextOverflow.ellipsis,
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.blue.withOpacity(0.1),
+              ),
+              child: Image.asset(_getRandomGroupIcon(), height: 40),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: Text(
+                group.name,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+              ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildTaskItem(Task task) {
+    return Dismissible(
+      key: Key(task.id?.toString() ?? UniqueKey().toString()),
+      background: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: Colors.red.shade100,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        child: const Icon(Icons.delete, color: Colors.red),
+      ),
+      direction: DismissDirection.endToStart,
+      confirmDismiss: (direction) async {
+        return await showDialog(
+          context: context,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              title: const Text("Confirm"),
+              content: const Text("Are you sure you want to delete this task?"),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text("Cancel"),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text("Delete", style: TextStyle(color: Colors.red)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+      onDismissed: (direction) async {
+        if (task.id != null) {
+          final taskService = TaskService();
+          await taskService.deleteTask(task.id!);
+          await _loadTasks();
+        }
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.1),
+              spreadRadius: 1,
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          leading: Checkbox(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            value: task.isCompleted,
+            onChanged: (bool? value) {
+              if (value != null) {
+                _toggleTaskCompletion(task);
+              }
+            },
+          ),
+          title: Text(
+            task.description,
+            style: TextStyle(
+              fontSize: 16,
+              decoration: task.isCompleted ? TextDecoration.lineThrough : null,
+              color: task.isCompleted ? Colors.grey : Colors.black,
+            ),
+          ),
+          subtitle: Text(
+            'Created: ${DateFormat.format(task.createdAt)}',
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          trailing: Icon(
+            task.isCompleted ? Icons.check_circle : Icons.pending,
+            color: task.isCompleted ? Colors.green : Colors.orange,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProgressIndicator() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          AnimatedBuilder(
+            animation: _progressAnimation,
+            builder: (context, child) {
+              return Container(
+                width: 150,
+                height: 150,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [
+                      _getPercentageColor(_progressAnimation.value),
+                      _getPercentageColor(_progressAnimation.value).withOpacity(0.7),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _getPercentageColor(_progressAnimation.value).withOpacity(0.3),
+                      spreadRadius: 3,
+                      blurRadius: 10,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    SizedBox(
+                      width: 140,
+                      height: 140,
+                      child: CircularProgressIndicator(
+                        value: _progressAnimation.value,
+                        strokeWidth: 10,
+                        backgroundColor: Colors.grey.shade200,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Colors.white.withOpacity(0.8),
+                        ),
+                      ),
+                    ),
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          '${(_progressAnimation.value * 100).round()}%',
+                          style: TextStyle(
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                            shadows: [
+                              Shadow(
+                                blurRadius: 10,
+                                color: Colors.black.withOpacity(0.2),
+                                offset: const Offset(2, 2),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Completed',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.white.withOpacity(0.9),
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          Text(
+            _getProgressMessage(_completionPercentage),
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey.shade700,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDrawerItem({
+    required IconData icon,
+    required String title,
+    required VoidCallback onTap,
+    bool isSelected = false,
+    Color? iconColor,
+  }) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: ListTile(
+        leading: Icon(
+          icon,
+          color: iconColor ?? (isSelected ? Colors.blue : Colors.grey.shade700),
+          size: 28,
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            color: isSelected ? Colors.blue : Colors.grey.shade800,
+          ),
+        ),
+        onTap: onTap,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+      ),
+    );
+  }
+
+  Widget _buildDrawer(BuildContext context) {
+    final authProvider = Provider.of<AuthProvider>(context);
+    final user = authProvider.user;
+    final theme = Theme.of(context);
+
+    return Drawer(
+      width: MediaQuery.of(context).size.width * 0.8,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.horizontal(right: Radius.circular(25)),
+      ),
+      elevation: 10,
+      child: Column(
+        children: [
+          // Header Section with fixed height
+          Container(
+            height: 180,
+            padding: const EdgeInsets.only(top: 40, left: 20, right: 20, bottom: 10),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  theme.primaryColor.withOpacity(0.95),
+                  theme.primaryColor.withOpacity(0.8),
+                ],
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  radius: 30,
+                  backgroundColor: Colors.white,
+                  child: Icon(
+                    Icons.person,
+                    size: 36,
+                    color: theme.primaryColor,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Flexible(
+                  child: Text(
+                    user?.name ?? 'Guest User',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Flexible(
+                  child: Text(
+                    user?.email ?? 'guest@example.com',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.white.withOpacity(0.9),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Scrollable Menu Section
+          Expanded(
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(25),
+                  topRight: Radius.circular(25),
+                ),
+              ),
+              child: ListView(
+                padding: const EdgeInsets.only(top: 20),
+                physics: const BouncingScrollPhysics(),
+                children: [
+                  _buildDrawerItem(
+                    icon: Icons.home,
+                    title: 'Dashboard',
+                    onTap: () {
+                      Navigator.pop(context);
+                      setState(() => _selectedIndex = 0);
+                    },
+                    isSelected: _selectedIndex == 0,
+                  ),
+                  _buildDrawerItem(
+                    icon: Icons.group,
+                    title: 'Groups',
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const GroupListScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  if (user != null && user.isAdmin)
+                    _buildDrawerItem(
+                      icon: Icons.add_circle_outline,
+                      title: 'Create Group',
+                      onTap: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const CreateGroupScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                  _buildDrawerItem(
+                    icon: Icons.task,
+                    title: 'My Tasks',
+                    onTap: () {
+                      Navigator.pop(context);
+                      setState(() => _selectedIndex = 1);
+                    },
+                    isSelected: _selectedIndex == 1,
+                  ),
+                  _buildDrawerItem(
+                    icon: Icons.note,
+                    title: 'Notes',
+                    onTap: () {
+                      Navigator.pop(context);
+                      setState(() => _selectedIndex = 2);
+                    },
+                    isSelected: _selectedIndex == 2,
+                  ),
+                  const Divider(height: 20, thickness: 1, indent: 20, endIndent: 20),
+                  _buildDrawerItem(
+                    icon: Icons.settings,
+                    title: 'Settings',
+                    onTap: () {
+                      Navigator.pop(context);
+                      setState(() => _selectedIndex = 3);
+                    },
+                    isSelected: _selectedIndex == 3,
+                  ),
+                  _buildDrawerItem(
+                    icon: Icons.help_outline,
+                    title: 'Help & Feedback',
+                    onTap: () {
+                      Navigator.pop(context);
+                      // Add help screen navigation
+                    },
+                  ),
+                  const SizedBox(height: 20),
+                  _buildDrawerItem(
+                    icon: Icons.logout,
+                    title: 'Logout',
+                    iconColor: Colors.red,
+                    onTap: () {
+                      authProvider.logout();
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const LoginScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 20), // Extra padding at bottom
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _getPercentageColor(double percentage) {
+    if (percentage < 0.3) return Colors.redAccent;
+    if (percentage < 0.7) return Colors.orangeAccent;
+    return Colors.greenAccent;
+  }
+
+  String _getProgressMessage(double percentage) {
+    if (percentage == 0) return "Start completing your tasks!";
+    if (percentage < 0.3) return "Keep pushing forward!";
+    if (percentage < 0.7) return "Great progress so far!";
+    if (percentage < 1) return "You're almost done!";
+    return "All tasks completed! Amazing work!";
   }
 
   @override
@@ -173,9 +637,22 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = authProvider.user;
 
     if (_isLoading) {
-      return const Scaffold(
+      return Scaffold(
         body: Center(
-          child: CircularProgressIndicator(),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 20),
+              Text(
+                'Loading your tasks...',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -183,191 +660,156 @@ class _HomeScreenState extends State<HomeScreen> {
     List<Task> userTasks = _tasks.where((task) => task.assignedTo == user?.id).toList();
     List<Task> adminTasks = _tasks.where((task) => task.assignedBy == user?.id).toList();
     bool hasTasks = user?.isAdmin ?? false ? adminTasks.isNotEmpty : userTasks.isNotEmpty;
-    double completionPercentage = hasTasks
-        ? _calculateCompletionPercentage(user?.isAdmin ?? false ? adminTasks : userTasks)
-        : 0.0;
 
     return Scaffold(
+      backgroundColor: Colors.grey.shade50,
       appBar: AppBar(
-        title: const Text('Task Master'),
+        title: const Text('Task Master', style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        elevation: 0,
         actions: [
           if (user?.isAdmin ?? false)
             IconButton(
               icon: const Icon(Icons.add),
               onPressed: _createNewTask,
+              tooltip: 'Create Task',
             ),
         ],
       ),
-      drawer: Drawer(
-        child: ListView(
-          padding: EdgeInsets.zero,
+      drawer: _buildDrawer(context),
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            UserAccountsDrawerHeader(
-              accountName: Text(user?.name ?? 'Guest'),
-              accountEmail: Text(user?.email ?? ''),
-              currentAccountPicture: const CircleAvatar(
-                child: Icon(Icons.person),
-              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24.0),
+              child: _buildProgressIndicator(),
             ),
-            ListTile(
-              leading: const Icon(Icons.group),
-              title: const Text('Groups'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const GroupListScreen(),
-                  ),
-                );
-              },
-            ),
-            if (user != null && user.isAdmin)
-              ListTile(
-                leading: const Icon(Icons.add),
-                title: const Text('Create Group'),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const CreateGroupScreen(),
-                    ),
-                  );
-                },
-              ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.logout),
-              title: const Text('Logout'),
-              onTap: () {
-                authProvider.logout();
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const LoginScreen(),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-      body: Column(
-        children: [
-          // Progress indicator
-          LinearProgressIndicator(
-            value: completionPercentage,
-            backgroundColor: Colors.grey[200],
-            valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
-            minHeight: 8,
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Text(
-              '${(completionPercentage * 100).round()}%',
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-
-          // Groups section
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Groups',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ),
-          SizedBox(
-            height: 100,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
+            Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              children: groupProvider.groups.map(_buildGroupIcon).toList(),
-            ),
-          ),
-
-          // Divider
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16.0),
-            child: Divider(),
-          ),
-
-          // Tasks section
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Tasks',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Your Groups',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Tap to view group details',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-          Expanded(
-            child: Padding(
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 140,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                children: groupProvider.groups.map(_buildGroupCard).toList(),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16.0, 24.0, 16.0, 8.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Your Tasks',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    user?.isAdmin ?? false
+                        ? 'Tasks you assigned to others'
+                        : 'Tasks assigned to you',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16.0),
               child: hasTasks
-                  ? ListView.builder(
-                itemCount: user?.isAdmin ?? false ? adminTasks.length : userTasks.length,
-                itemBuilder: (context, index) {
-                  final task = user?.isAdmin ?? false ? adminTasks[index] : userTasks[index];
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      title: Text(task.description),
-                      subtitle: Text(
-                        'Created: ${task.createdAt.toLocal().toString().split(' ')[0]}',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      trailing: Checkbox(
-                        value: task.isCompleted,
-                        onChanged: (bool? value) {
-                          if (value != null) {
-                            _toggleTaskCompletion(task);
-                          }
-                        },
-                      ),
-                    ),
-                  );
-                },
+                  ? Column(
+                children: (user?.isAdmin ?? false ? adminTasks : userTasks)
+                    .map(_buildTaskItem)
+                    .toList(),
               )
                   : Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Image.asset('assets/images/notask.png', height: 100),
+                    Image.asset(
+                      'assets/images/notask.png',
+                      height: 120,
+                      color: Colors.grey.shade400,
+                    ),
                     const SizedBox(height: 16),
-                    const Text(
-                      'No Tasks!',
-                      style: TextStyle(fontSize: 20, color: Colors.grey),
+                    Text(
+                      'No Tasks Yet!',
+                      style: TextStyle(
+                        fontSize: 18,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      user?.isAdmin ?? false
+                          ? 'Create tasks for your team'
+                          : 'Tasks assigned to you will appear here',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey.shade500,
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+          ],
+        ),
       ),
       bottomNavigationBar: BottomNavigationBar(
+        type: BottomNavigationBarType.fixed,
+        backgroundColor: Colors.white,
+        elevation: 8,
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(
-            icon: Icon(Icons.home),
+            icon: Icon(Icons.home_outlined),
+            activeIcon: Icon(Icons.home),
             label: 'Home',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.task),
+            icon: Icon(Icons.task_outlined),
+            activeIcon: Icon(Icons.task),
             label: 'Tasks',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.note),
+            icon: Icon(Icons.note_outlined),
+            activeIcon: Icon(Icons.note),
             label: 'Notes',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.person),
+            icon: Icon(Icons.person_outlined),
+            activeIcon: Icon(Icons.person),
             label: 'Account',
           ),
         ],
@@ -376,6 +818,23 @@ class _HomeScreenState extends State<HomeScreen> {
         unselectedItemColor: Colors.grey,
         onTap: _onItemTapped,
       ),
+      floatingActionButton: (user?.isAdmin ?? false)
+          ? FloatingActionButton(
+        onPressed: _createNewTask,
+        backgroundColor: Colors.blue,
+        child: const Icon(Icons.add, color: Colors.white),
+      )
+          : null,
     );
+  }
+}
+
+class DateFormat {
+  static String format(DateTime date) {
+    final months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
   }
 }
